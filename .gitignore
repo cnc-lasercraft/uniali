@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Editor / OS
+.DS_Store
+._*
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code / Agent-Runtime
+.claude/
+
+# Build
+dist/
+build/

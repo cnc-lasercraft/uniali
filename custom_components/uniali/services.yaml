@@ -1,0 +1,39 @@
+refresh:
+  name: Refresh
+  description: Liest UniFi-Clients und HA-Devices neu ein und aktualisiert sensor.uniali_aliases.
+
+sync_unifi:
+  name: Sync HA → UniFi
+  description: Schreibt den HA-Friendly-Name als UniFi-Client-Alias für die angegebene MAC.
+  fields:
+    mac:
+      name: MAC
+      description: MAC-Adresse des Ziel-Geräts (z.B. cc:ba:97:dd:12:dc).
+      required: true
+      selector:
+        text:
+
+sync_device:
+  name: Sync HA → Gerät
+  description: Schreibt den HA-Friendly-Name als geräteinternen Namen via Vendor-Adapter (z.B. Shelly-RPC).
+  fields:
+    mac:
+      name: MAC
+      description: MAC-Adresse des Ziel-Geräts.
+      required: true
+      selector:
+        text:
+
+forget_unifi:
+  name: UniFi-Client vergessen
+  description: >-
+    Lässt UniFi den Client komplett vergessen. Verliert: Alias, Fixed-IP,
+    User-Group, Block-Status, Stats. Beim nächsten Reconnect entsteht ein
+    frischer Eintrag ohne Pflege. Für Karteileichen-Cleanup.
+  fields:
+    mac:
+      name: MAC
+      description: MAC-Adresse des zu vergessenden Clients.
+      required: true
+      selector:
+        text:

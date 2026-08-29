@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UniFi Controller verbinden",
+        "description": "Local-User in UniFi (Read+Write auf Clients). Best Practice: dedizierter Account `uniali`.",
+        "data": {
+          "host": "Host (IP oder DNS)",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "site": "Site-Slug",
+          "verify_ssl": "SSL-Zertifikat verifizieren"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Controller fehlgeschlagen.",
+      "invalid_auth": "Login abgelehnt.",
+      "unknown": "Unbekannter Fehler beim Verbinden."
+    },
+    "abort": {
+      "already_configured": "Diese UniFi-Site ist bereits konfiguriert."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "uniali_aliases": {
+        "name": "Aliases"
+      }
+    }
+  }
+}
