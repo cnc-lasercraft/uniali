@@ -10,7 +10,7 @@ Home Assistant Custom Component — synchronisiert **Friendly-Names aus HA** mit
 
 - **HA-Produktivsystem:** `/Volumes/Daten/ClaudeCode/home-assistant/` — Ziel-Installation, 2026.4.x HAOS, ~5400 Entities, ~80 Shellys, 9 UniFi APs.
 - **HA-Quirks:** `/Volumes/Daten/ClaudeCode/ha_quirks.md` — zentrale Wissensbasis für HA-Eigenheiten.
-- **ha-herold:** `/Volumes/Daten/ClaudeCode/ha-herold/` — CC-Pattern und Saver-Familie. Optional als Notification-Senke wenn uniali Audit-Resultate broadcasten soll.
+- **ha-herold:** `/Volumes/Daten/ClaudeCode/ha-herold/` — CC-Pattern und Saver-Familie. **Seit 2026-08-30 als Meldungs-Senke angebunden** (`herold.py`, fünf Topics, siehe unten).
 - **Saver-Familie:** `device_saver`, `tariff_saver`, `matter_saver`, `water_saver` — etablierter Naming-Pattern, uniali fügt sich ein (auch wenn nicht „saver" im Namen).
 
 ## Arbeitsregeln (übernommen vom HA-Projekt)
@@ -24,6 +24,38 @@ Home Assistant Custom Component — synchronisiert **Friendly-Names aus HA** mit
 
 - **Repo/Verzeichnis:** `uniali`
 - **Integrations-Domain:** `uniali` (→ `custom_components/uniali/`, Service-Calls `uniali.*`)
+
+## Veröffentlichung (2026-08-30)
+
+**Repo:** https://github.com/cnc-lasercraft/uniali (public, MIT). Release **v1.0.0**,
+Validate-Workflow (hacs/action + hassfest) grün. **HACS-Default-PR:** hacs/default#10459
+— offen, 11/11 grün, `REVIEW_REQUIRED`. Playbook dazu:
+`ha-theme-studio/docs/HACS_DEFAULT_SUBMISSION.md`; **§8 beachten** — bei einem
+`changes_requested` parkt der hacs-bot den PR als Draft ausserhalb der Review-Queue,
+regelmässig `gh pr view 10459 --repo hacs/default --json isDraft` prüfen.
+Release entsteht automatisch beim manifest-Versions-Bump (`release.yml`).
+Brand-Assets liegen lokal unter `custom_components/uniali/brand/` (seit HA 2026.3 der
+einzige Weg — kein brands-PR).
+
+## Herold-Anbindung (2026-08-30)
+
+`herold.py` — optionale Kann-Abhängigkeit, bewusst NICHT in der `manifest.json`.
+Fünf Topics, beim Setup registriert (verschiebt sich auf `homeassistant_started`,
+falls Herold noch nicht geladen ist):
+
+| Topic | Wann | Zustellung |
+|---|---|---|
+| `uniali/sync/unifi` | UniFi-Alias geschrieben | `log_only` |
+| `uniali/sync/geraet` | Gerätename via Adapter geschrieben | `log_only` |
+| `uniali/client/vergessen` | Forget ausgeführt | `log_only` |
+| `uniali/sync/fehler` | Sync abgelehnt / Schreiben fehlgeschlagen | warnung → `techn_support` |
+| `uniali/verbindung/fehler` | Controller beim Refresh tot | warnung → `techn_support` |
+
+Erfolge sind `log_only` (Audit-Trail ohne Push — wer klickt, sieht das Resultat in der
+Card). `verbindung/fehler` meldet nur die Flanke ok → Fehler, sonst würde jeder
+Refresh-Klick bei totem Controller erneut feuern. **Kein Scheduler** — bewusste
+Entscheidung, uniali bleibt manuell; deshalb gibt es keinen proaktiven Drift-Report.
+Der Refresh-Pfad wirft jetzt `UpdateFailed` statt eines rohen Tracebacks.
 
 ## Aktueller Stand
 
