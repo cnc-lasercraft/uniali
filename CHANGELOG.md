@@ -3,6 +3,22 @@
 Alle nennenswerten Änderungen an uniali. Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 Versionierung nach [SemVer](https://semver.org/lang/de/).
 
+## [1.0.1] — 2026-08-30
+
+### Behoben
+
+- **Tote UniFi-Session nach gescheitertem Re-Login.** aiounifi heilt eine
+  abgelaufene Session selbst (`LoginRequired` → Re-Login → Request-Retry).
+  Scheitert dieser Re-Login aber — etwa weil der Controller gerade neu startet
+  und mit „Login Failed: Host starting up" antwortet — bleibt
+  `can_retry_login` auf `False`, und jeder weitere Request wirft sofort
+  `LoginRequired`, ohne je wieder einen Login zu versuchen. Da uniali das
+  Controller-Objekt cacht, war das bis zum HA-Neustart tot. Der Cache wird
+  jetzt bei `LoginRequired` / `Unauthorized` / `Forbidden` verworfen, sodass
+  der nächste Aufruf frisch anmeldet — bewusst **nicht** bei Timeouts und
+  Netzfehlern, weil ein zweiter Login kurz nach dem ersten vom
+  UniFi-Controller mit 403 quittiert wird.
+
 ## [1.0.0] — 2026-08-30
 
 Erstes öffentliches Release. Der Code läuft seit Juli 2026 im Produktivsystem

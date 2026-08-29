@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/cnc-lasercraft/uniali/issues",
   "requirements": ["aiounifi>=83"],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }

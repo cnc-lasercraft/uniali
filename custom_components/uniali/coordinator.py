@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, TypedDict
 
 from aiounifi import Controller
+from aiounifi.errors import Forbidden, LoginRequired, Unauthorized
 from aiounifi.models.api import ApiRequest
 from aiounifi.models.configuration import Configuration
 
@@ -109,6 +110,26 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         self._controller = controller
         return controller
 
+    def _verwerfe_controller_bei_auth_fehler(self, err: Exception) -> None:
+        """Wirft die gecachte Session weg, wenn der Fehler Auth-Natur hat.
+
+        aiounifi heilt eine abgelaufene Session selbst: `Connectivity.request`
+        fängt `LoginRequired`, meldet sich neu an und wiederholt den Request.
+        Scheitert aber dieser Re-Login (Controller im Neustart →
+        "Login Failed: Host starting up"), bleibt `can_retry_login` auf False —
+        und dann wirft jeder weitere Request sofort `LoginRequired`, ohne je
+        wieder einen Login zu versuchen. Da wir das Controller-Objekt cachen,
+        wäre das bis zum HA-Neustart tot.
+
+        Bewusst NUR bei Auth-Fehlern: bei Timeouts und Netzfehlern lebt die
+        Session weiter, und ein zweiter Login kurz nach dem ersten quittiert der
+        UniFi-Controller mit 403 — ein pauschales Verwerfen würde aus einem
+        Netz-Blip eine Login-Sperre machen.
+        """
+        if isinstance(err, (Forbidden, LoginRequired, Unauthorized)):
+            self._controller = None
+            _LOGGER.debug("Auth-Fehler (%s) — Controller-Session verworfen", type(err).__name__)
+
     async def _async_update_data(self) -> list[UnialiEntry]:
         # clients_all = /rest/user (alias-DB, source of truth für _id)
         # clients     = /stat/sta (aktive Clients, gibt uns die IP)
@@ -125,6 +146,7 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 ApiRequest(method="get", path="/stat/sta")
             )
         except Exception as err:  # noqa: BLE001
+            self._verwerfe_controller_bei_auth_fehler(err)
             # Nur die Flanke ok → Fehler melden. Ohne diese Bedingung würde
             # jeder Refresh-Klick bei totem Controller erneut Herold füttern.
             if self.last_update_success:
@@ -566,6 +588,7 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 )
             )
         except Exception as err:  # noqa: BLE001
+            self._verwerfe_controller_bei_auth_fehler(err)
             _LOGGER.exception("sync_unifi: Schreiben fehlgeschlagen für %s", mac)
             await async_senden(
                 self.hass,
@@ -613,6 +636,7 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 )
             )
         except Exception as err:  # noqa: BLE001
+            self._verwerfe_controller_bei_auth_fehler(err)
             _LOGGER.exception("forget-sta für %s fehlgeschlagen", mac)
             await async_senden(
                 self.hass,
