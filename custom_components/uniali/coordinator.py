@@ -462,16 +462,27 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
             else:
                 partials[idx]["read_failed"] = True
 
-        # Phase 2.5: bogus IP-Joins verwerfen. Wenn ein per IP zusammengefügter
-        # Eintrag einen Adapter zugewiesen bekam (= „HA glaubt das ist ein
-        # Shelly") aber der Adapter beim Read keinerlei Antwort vom Gerät auf
-        # der IP bekam, war der Join falsch (typischer Fall: stale HA-Config-
-        # Entry-Host). Eintrag rauswerfen.
-        partials = [
-            p
-            for p in partials
-            if not (p.get("via_ip") and p.get("adapter") and p.get("read_failed"))
-        ]
+        # Phase 2.5: bogus IP-Joins zurückstufen. Wenn ein per IP zusammen-
+        # gefügter Eintrag einen Adapter zugewiesen bekam (= „HA glaubt das ist
+        # ein Shelly") aber der Adapter beim Read keinerlei Antwort vom Gerät
+        # auf der IP bekam, war der Join falsch (typischer Fall: stale HA-
+        # Config-Entry-Host). Die HA-Identität ist damit hinfällig — der
+        # UniFi-Client selbst existiert aber sehr wohl und gehört als
+        # Karteileiche in den Hygiene-Modus (wie Phase 1.6). Ihn ganz zu
+        # streichen liesse ihn aus Audit *und* Hygiene verschwinden: genau die
+        # Clients, die niemand mehr sieht, wären dann unsichtbar.
+        for i, p in enumerate(partials):
+            if p.get("via_ip") and p.get("adapter") and p.get("read_failed"):
+                partials[i] = {
+                    "mac": p["mac"],
+                    "ha_name": None,
+                    "device": None,
+                    "unifi": p["unifi"],
+                    "adapter": None,
+                    "is_shadow": False,
+                    "ha_known": False,
+                    "effective_ip": p["unifi"].get("ip"),
+                }
 
         # Phase 3: Entries komplett bauen
         entries: list[UnialiEntry] = []

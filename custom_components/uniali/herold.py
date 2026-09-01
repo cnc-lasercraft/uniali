@@ -7,9 +7,11 @@ gibt keinen Fallback auf `notify.*`. Darum steht `herold` bewusst NICHT in der
 
 uniali ist ein manuelles Werkzeug ohne Scheduler — Meldungen entstehen nur aus
 Aktionen, die der User in der Card auslöst, plus dem Verbindungsfehler beim
-Refresh. Die drei Erfolgs-Topics laufen deshalb als `log_only` (Audit-Trail in
-der Herold-History, kein Push aufs Handy — wer klickt, sieht das Ergebnis
-bereits in der Card).
+Refresh. Alle vier Klick-Topics laufen deshalb als `log_only` (Audit-Trail in
+der Herold-History, kein Push aufs Handy — wer klickt, sieht das Ergebnis,
+Erfolg wie Fehler, bereits in der Card). Nur `uniali/verbindung/fehler` pusht:
+er trifft den Refresh-Pfad, wo der Controller-Ausfall die eigentliche Nachricht
+ist.
 """
 from __future__ import annotations
 
@@ -59,7 +61,9 @@ TOPICS: dict[str, dict[str, Any]] = {
             "erreichbar, UniFi-API-Fehler oder veralteter Datenstand."
         ),
         "default_severity": "warnung",
-        "default_rollen": ["techn_support"],
+        # Kein Push: der Fehler ist die Antwort auf einen eigenen Sync-Klick,
+        # der User steht vor der Card und sieht das Resultat dort sofort.
+        "log_only": True,
     },
     TOPIC_CLIENT_VERGESSEN: {
         "name": "uniali: UniFi-Client vergessen",

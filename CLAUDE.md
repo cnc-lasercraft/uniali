@@ -48,11 +48,12 @@ falls Herold noch nicht geladen ist):
 | `uniali/sync/unifi` | UniFi-Alias geschrieben | `log_only` |
 | `uniali/sync/geraet` | Gerätename via Adapter geschrieben | `log_only` |
 | `uniali/client/vergessen` | Forget ausgeführt | `log_only` |
-| `uniali/sync/fehler` | Sync abgelehnt / Schreiben fehlgeschlagen | warnung → `techn_support` |
+| `uniali/sync/fehler` | Sync abgelehnt / Schreiben fehlgeschlagen | warnung, `log_only` |
 | `uniali/verbindung/fehler` | Controller beim Refresh tot | warnung → `techn_support` |
 
-Erfolge sind `log_only` (Audit-Trail ohne Push — wer klickt, sieht das Resultat in der
-Card). `verbindung/fehler` meldet nur die Flanke ok → Fehler, sonst würde jeder
+Alle vier Klick-Topics sind `log_only` (Audit-Trail ohne Push — wer klickt, sieht das
+Resultat in der Card, Erfolg wie Fehler; seit 1.0.2 gilt das auch für
+`sync/fehler`). `verbindung/fehler` meldet nur die Flanke ok → Fehler, sonst würde jeder
 Refresh-Klick bei totem Controller erneut feuern. **Kein Scheduler** — bewusste
 Entscheidung, uniali bleibt manuell; deshalb gibt es keinen proaktiven Drift-Report.
 Der Refresh-Pfad wirft jetzt `UpdateFailed` statt eines rohen Tracebacks.

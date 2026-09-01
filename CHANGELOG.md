@@ -3,6 +3,33 @@
 Alle nennenswerten Änderungen an uniali. Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 Versionierung nach [SemVer](https://semver.org/lang/de/).
 
+## [1.0.2] — 2026-09-01
+
+### Geändert
+
+- **`uniali/sync/fehler` ist jetzt `log_only`** statt Push an `techn_support`.
+  uniali hat keinen Scheduler, die Meldung kann also nur als Reaktion auf einen
+  eigenen Sync-Klick entstehen — der User steht dabei vor der Card und sieht
+  das Ergebnis dort sofort. Ein Push kam regelmässig zu spät (Belegfall: Push
+  „Sync abgelehnt", 20 s später derselbe Client sauber gesynct). Damit sind
+  alle vier Klick-Topics `log_only`; Push gibt es nur noch für
+  `uniali/verbindung/fehler`, wo der Controller-Ausfall im Refresh-Pfad die
+  eigentliche Nachricht ist. Wer den Push behalten will, setzt in Herold ein
+  Topic-Override.
+
+### Behoben
+
+- **Fehlgeschlagener IP-Join liess den UniFi-Client ganz verschwinden.** Zeigt
+  eine veraltete HA-Config-Entry auf eine IP, die DHCP inzwischen einem anderen
+  Gerät gegeben hat, entsteht ein falscher IP-Join (Phase 1.5). Der Adapter-Read
+  scheitert dann korrekt — bisher wurde daraufhin aber der ganze Eintrag
+  verworfen, samt UniFi-Client. Der Client fehlte damit in Audit *und*
+  Hygiene-Modus: unsichtbar für genau das Werkzeug, das ihn finden soll.
+  Der Eintrag wird jetzt auf eine UniFi-only-Zeile zurückgestuft
+  (`ha_known=False`), wie sie Phase 1.6 erzeugt hätte. Realfall: ein
+  batteriebetriebener Shelly Button hielt die alte IP einer Miele-Kaffeemaschine
+  fest, die dadurch aus dem Audit fiel.
+
 ## [1.0.1] — 2026-08-30
 
 ### Behoben

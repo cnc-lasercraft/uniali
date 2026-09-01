@@ -64,10 +64,10 @@ Fünf Topics werden beim Setup registriert (idempotent):
 | `uniali/sync/unifi` | info, `log_only` | UniFi-Alias geschrieben (mit Alt → Neu) |
 | `uniali/sync/geraet` | info, `log_only` | Gerätename via Adapter geschrieben |
 | `uniali/client/vergessen` | info, `log_only` | Client aus der UniFi-DB entfernt |
-| `uniali/sync/fehler` | warnung → `techn_support` | Sync abgelehnt oder Schreiben fehlgeschlagen |
+| `uniali/sync/fehler` | warnung, `log_only` | Sync abgelehnt oder Schreiben fehlgeschlagen |
 | `uniali/verbindung/fehler` | warnung → `techn_support` | Controller beim Refresh nicht erreichbar |
 
-Die drei Erfolgs-Topics laufen als `log_only`: sie landen in der Herold-History als Audit-Trail, lösen aber keinen Push aus — wer in der Card klickt, sieht das Ergebnis ohnehin sofort. Nur echte Fehler werden zugestellt. `uniali/verbindung/fehler` meldet ausschliesslich die Flanke ok → Fehler, nicht jeden Folgeversuch.
+Die vier Klick-Topics laufen als `log_only`: sie landen in der Herold-History als Audit-Trail, lösen aber keinen Push aus — wer in der Card klickt, sieht das Ergebnis ohnehin sofort, Erfolg wie Fehler. Zugestellt wird nur `uniali/verbindung/fehler`, weil der Controller-Ausfall im Refresh-Pfad die eigentliche Nachricht ist; er meldet ausschliesslich die Flanke ok → Fehler, nicht jeden Folgeversuch.
 
 ## Architektur
 
