@@ -650,17 +650,42 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         # User kann via ⟳ manuell verifizieren wenn gewünscht.
         self._optimistic_update(mac, unifi_alias=target["ha_name"])
 
-    async def async_sync_hostname(self, mac: str) -> None:
-        """Schreibt den HA-Namen (slug-normalisiert) als UniFi-Hostnamen.
+    async def async_sync_hostname(
+        self, mac: str, hostname: str | None = None
+    ) -> None:
+        """Schreibt einen Hostnamen (slug-normalisiert) in den UniFi-Client.
 
         Bewusst eine eigene Aktion und nicht Teil von `sync_unifi`: der Alias
         ist reine UniFi-Kosmetik, der Hostname zieht den lokalen DNS-Namen
         `<name>.<domain>` mit. Wer per Hostnamen auflöst (mDNS, `.local`,
         Skripte), merkt eine Änderung — also nur auf ausdrücklichen Klick.
+
+        Ohne `hostname` ist die Quelle der HA-Name der Zeile. Mit `hostname`
+        wird ein freier Wert geschrieben — der Weg für reine UniFi-Clients
+        (Kameras, Drucker, alles ohne HA-Gerät), die gar keinen HA-Namen
+        haben, aber genau die Geräte sind, die sich unter einem Müll-Namen
+        melden.
         """
         mac = _norm_mac(mac)
         entries = self.data or []
         target = next((e for e in entries if e["mac"] == mac), None)
+        if hostname is not None:
+            frei = _host_slug(hostname)
+            if target is None or not frei:
+                _LOGGER.warning(
+                    "sync_hostname abgelehnt für %s (unbekannt oder leerer Wert)", mac
+                )
+                await async_senden(
+                    self.hass,
+                    TOPIC_SYNC_FEHLER,
+                    "Hostname-Sync abgelehnt",
+                    f"{_label(target) if target else mac}: "
+                    f"„{hostname}“ ergibt keinen gültigen Hostnamen.",
+                    severity="warnung",
+                )
+                return
+            await self._async_hostname_schreiben(target, frei)
+            return
         if target is None or not target["sync_hostname_possible"]:
             _LOGGER.warning("sync_hostname abgelehnt für %s (nicht möglich)", mac)
             await async_senden(
@@ -672,6 +697,13 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 severity="warnung",
             )
             return
+        await self._async_hostname_schreiben(target, target["hostname_target"])
+
+    async def _async_hostname_schreiben(
+        self, target: UnialiEntry, neuer_host: str | None
+    ) -> None:
+        """Gemeinsamer Schreibpfad für beide Hostname-Quellen (HA-Name / frei)."""
+        mac = target["mac"]
         if not target["unifi_id"]:
             _LOGGER.warning("sync_hostname: kein UniFi-_id für %s — Refresh nötig", mac)
             await async_senden(
@@ -682,7 +714,6 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 severity="warnung",
             )
             return
-        neuer_host = target["hostname_target"]
         vorher = target["unifi_hostname"]
         controller = await self._ensure_controller()
         try:
@@ -708,7 +739,7 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
             self.hass,
             TOPIC_SYNC_UNIFI,
             "UniFi-Hostname gesetzt",
-            f"{target['ha_name']} ({mac}): Hostname {vorher or '—'} → {neuer_host}",
+            f"{_label(target)}: Hostname {vorher or '—'} → {neuer_host}",
         )
         self._optimistic_update(mac, unifi_hostname=neuer_host)
 

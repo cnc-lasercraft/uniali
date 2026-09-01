@@ -292,6 +292,20 @@ class UnialiCard extends HTMLElement {
     // 6) Forget-Button
     const actTd = document.createElement("td");
     actTd.className = "actions";
+    // Hostname frei setzen — für reine UniFi-Clients gibt es keinen HA-Namen
+    // als Quelle, und gerade die melden sich unter Müll-Namen (Kameras mit
+    // dynamic.cust.…, Geräte mit fremdem Legacy-Namen).
+    const hostBtn = document.createElement("button");
+    hostBtn.className = "host-btn";
+    hostBtn.textContent = "✎ host";
+    hostBtn.title = e.unifi_hostname
+      ? `Hostname "${e.unifi_hostname}" überschreiben`
+      : "Hostname setzen";
+    hostBtn.dataset.action = "set_hostname_prompt";
+    hostBtn.dataset.mac = e.mac;
+    hostBtn.dataset.hostname = e.unifi_hostname || "";
+    actTd.appendChild(hostBtn);
+
     const btn = document.createElement("button");
     btn.className = "forget-btn";
     btn.textContent = "× forget";
@@ -353,6 +367,22 @@ class UnialiCard extends HTMLElement {
       const action = btn.dataset.action;
       const mac = btn.dataset.mac;
       if (!action || !mac) return;
+      if (action === "set_hostname_prompt") {
+        const aktuell = btn.dataset.hostname;
+        const eingabe = window.prompt(
+          "Neuer UniFi-Hostname für " + mac + "\n\n" +
+            "Wird DNS-tauglich normalisiert (klein, Umlaute ausgeschrieben,\n" +
+            "Trenner zu \"-\"). UniFi leitet daraus den lokalen DNS-Namen ab.",
+          aktuell
+        );
+        if (eingabe && eingabe.trim() && eingabe.trim() !== aktuell) {
+          this._hass.callService("uniali", "sync_hostname", {
+            mac,
+            hostname: eingabe.trim(),
+          });
+        }
+        return;
+      }
       if (action === "forget_unifi_confirm") {
         const alias = btn.dataset.alias;
         const hostname = btn.dataset.hostname;
@@ -690,6 +720,14 @@ class UnialiCard extends HTMLElement {
         padding: 2px 8px; cursor: pointer; font-size: 0.85em;
       }
       .forget-btn:hover { background: var(--error-color, #db4437); color: #fff; }
+      /* Hostname-Knopf bewusst neutral statt rot — er ändert etwas, löscht
+         aber nichts. Der Forget daneben soll die alarmierende Farbe behalten. */
+      .host-btn {
+        background: transparent; color: var(--primary-text-color);
+        border: 1px solid var(--divider-color); border-radius: 4px;
+        padding: 2px 8px; cursor: pointer; font-size: 0.85em; margin-right: 6px;
+      }
+      .host-btn:hover { border-color: var(--primary-color); color: var(--primary-color); }
       td.name { font-family: var(--code-font-family, monospace); font-size: 0.9em; }
       td.name.empty { opacity: 0.4; font-style: italic; }
       td.name.device { opacity: 0.85; }

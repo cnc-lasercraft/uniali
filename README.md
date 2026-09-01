@@ -24,6 +24,8 @@ Opt-out per HA-Device-Label `unifi_sync_ignore` — was nicht im Audit auftauche
 
 Neben dem Alias lässt sich auch der **DHCP-Hostname** des Clients überschreiben — nützlich, wenn ein Gerät sich unter einem falschen oder veralteten Namen meldet und weder Werksreset noch Rename beim Hersteller hilft. Die Card blendet Spalte und Knopf erst über den Toggle „Hostnamen" ein, und der Sync ist bewusst eine **eigene Aktion**: UniFi leitet aus dem Hostnamen den lokalen DNS-Namen ab, ein Klick wirkt also über die Card hinaus. Geschrieben wird eine DNS-taugliche Form des HA-Namens (`Wärmeschublade` → `waermeschublade`); verglichen wird ebenso normalisiert, damit `Shelly_Mini_DG_TV` und `Shelly-Mini-DG-TV` nicht als Unterschied gelten. Hostname-Abweichungen zählen nicht in den Mismatch-Zähler.
 
+Clients **ohne HA-Gerät** haben keinen HA-Namen als Quelle — sie sind aber oft genau die, die sich unter einem Müll-Namen melden (Kameras mit `…dynamic.cust.…`). Für sie gibt es im Hygiene-Modus den Knopf `✎ host`: freier Wert per Dialog, gleich normalisiert.
+
 ### Hygiene-Modus
 
 Zweiter Card-Modus für Karteileichen-Cleanup: zeigt UniFi-only-Clients ohne HA-Bezug (Privacy-MAC-Rotationen, gelöschte Gäste), HA-Orphans (Tracker-Reste alter Integrationen), und alles >30 Tage offline. × Forget-Knopf pro Zeile mit Confirm-Dialog (warnt vor Verlust von Alias / Fixed-IP-Reservation).
@@ -56,7 +58,7 @@ Zweiter Card-Modus für Karteileichen-Cleanup: zeigt UniFi-only-Clients ohne HA-
 | `uniali.refresh` | UniFi-Clients + HA-Devices neu einlesen |
 | `uniali.sync_unifi` | HA-Friendly-Name als UniFi-Client-Alias schreiben (`mac`) |
 | `uniali.sync_device` | HA-Friendly-Name via Vendor-Adapter ins Gerät schreiben (`mac`) |
-| `uniali.sync_hostname` | HA-Friendly-Name als UniFi-**Hostname** schreiben, DNS-tauglich normalisiert (`mac`) |
+| `uniali.sync_hostname` | UniFi-**Hostname** schreiben, DNS-tauglich normalisiert (`mac`, optional `hostname` für einen freien Wert) |
 | `uniali.forget_unifi` | UniFi-Client komplett vergessen lassen (`mac`) |
 
 ## Meldungen via Herold (optional)

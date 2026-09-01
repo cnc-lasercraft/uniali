@@ -11,8 +11,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.loader import async_get_integration
 
 from .const import (
+    ATTR_HOSTNAME,
     ATTR_MAC,
     CARD_URL,
     DOMAIN,
@@ -30,6 +32,11 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 SERVICE_SYNC_SCHEMA = vol.Schema({vol.Required(ATTR_MAC): cv.string})
+# sync_hostname kennt zusätzlich einen freien Zielwert — für UniFi-Clients ohne
+# HA-Gerät, die keinen HA-Namen als Quelle haben.
+SERVICE_HOSTNAME_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_MAC): cv.string, vol.Optional(ATTR_HOSTNAME): cv.string}
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -71,6 +78,15 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         [StaticPathConfig(CARD_URL, str(card_path), cache_headers=False)]
     )
 
+    # Resource-URL trägt die Integrations-Version als Query. Grund: der Browser
+    # cacht ein einmal geladenes ES-Modul pro URL hartnäckig — ohne den
+    # Parameter sieht der User nach einem uniali-Update weiter die alte Card
+    # und muss von Hand hart neu laden. Die Query interessiert den
+    # Static-Handler nicht, sie ist reines Cache-Busting.
+    integration = await async_get_integration(hass, DOMAIN)
+    version = integration.manifest.get("version") or "0"
+    versioned_url = f"{CARD_URL}?v={version}"
+
     # Lovelace-Resource registrieren (nur in Storage-Mode möglich; YAML-Mode-User
     # müssen den Eintrag manuell in lovelace.yaml ergänzen).
     try:
@@ -97,21 +113,39 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         if not getattr(resources, "loaded", True):
             await resources.async_load()
             resources.loaded = True
-        already = any(
-            (item.get("url") == CARD_URL) for item in resources.async_items()
+        # Bestehenden Eintrag über den Pfad finden — die Version dahinter
+        # ändert sich ja gerade, ein Vergleich auf die volle URL würde bei
+        # jedem Update einen zweiten Eintrag anlegen.
+        vorhanden = next(
+            (
+                item
+                for item in resources.async_items()
+                if (item.get("url") or "").split("?", 1)[0] == CARD_URL
+            ),
+            None,
         )
-        if not already:
+        if vorhanden is None:
             await resources.async_create_item(
-                {"res_type": "module", "url": CARD_URL}
+                {"res_type": "module", "url": versioned_url}
             )
             _LOGGER.info(
-                "Lovelace-Resource registriert: %s (Browser-Reload nötig)", CARD_URL
+                "Lovelace-Resource registriert: %s (Browser-Reload nötig)",
+                versioned_url,
+            )
+        elif vorhanden.get("url") != versioned_url:
+            await resources.async_update_item(
+                vorhanden["id"], {"res_type": "module", "url": versioned_url}
+            )
+            _LOGGER.info(
+                "Lovelace-Resource aktualisiert: %s → %s",
+                vorhanden.get("url"),
+                versioned_url,
             )
     else:
         _LOGGER.warning(
             "Lovelace im YAML-Mode oder nicht verfügbar — bitte manuell als "
             "Resource eintragen: url=%s, type=module",
-            CARD_URL,
+            versioned_url,
         )
 
     hass.data[DOMAIN]["_card_registered"] = True
@@ -143,9 +177,10 @@ def _async_register_services(
 
     async def _sync_hostname(call: ServiceCall) -> None:
         mac = call.data[ATTR_MAC]
+        hostname = call.data.get(ATTR_HOSTNAME)
         for coord in hass.data[DOMAIN].values():
             if isinstance(coord, UnialiCoordinator):
-                await coord.async_sync_hostname(mac)
+                await coord.async_sync_hostname(mac, hostname)
 
     async def _forget_unifi(call: ServiceCall) -> None:
         mac = call.data[ATTR_MAC]
@@ -161,7 +196,7 @@ def _async_register_services(
         DOMAIN, SERVICE_SYNC_DEVICE, _sync_device, schema=SERVICE_SYNC_SCHEMA
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_SYNC_HOSTNAME, _sync_hostname, schema=SERVICE_SYNC_SCHEMA
+        DOMAIN, SERVICE_SYNC_HOSTNAME, _sync_hostname, schema=SERVICE_HOSTNAME_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_FORGET_UNIFI, _forget_unifi, schema=SERVICE_SYNC_SCHEMA

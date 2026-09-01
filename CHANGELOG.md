@@ -3,6 +3,26 @@
 Alle nennenswerten Änderungen an uniali. Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 Versionierung nach [SemVer](https://semver.org/lang/de/).
 
+## [1.2.0] — 2026-09-01
+
+### Neu
+
+- **Freier Hostname für Clients ohne HA-Gerät.** `uniali.sync_hostname` nimmt
+  jetzt optional ein `hostname`-Feld; im Hygiene-Modus gibt es dafür pro Zeile
+  einen `✎ host`-Knopf. Damit ist genau die Gruppe erreichbar, die den
+  Hostname-Sync am nötigsten hat: reine UniFi-Clients (Kameras, Drucker) haben
+  keinen HA-Namen als Quelle, melden sich aber oft unter Müll-Namen wie
+  `0.1.2.1.2.0.a.2.dynamic.cust.swisscom.net`. Der Wert wird gleich
+  normalisiert wie beim HA-Namen.
+
+### Geändert
+
+- **Lovelace-Resource trägt die Version als Query** (`uniali-card.js?v=1.2.0`).
+  Ein einmal geladenes ES-Modul cacht der Browser pro URL hartnäckig — ohne
+  den Parameter sah man nach jedem uniali-Update die alte Card und musste von
+  Hand hart neu laden. Ein bestehender Eintrag wird beim Versionswechsel
+  aktualisiert statt ein zweiter angelegt.
+
 ## [1.1.0] — 2026-09-01
 
 ### Neu

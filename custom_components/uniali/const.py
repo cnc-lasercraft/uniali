@@ -24,6 +24,8 @@ SERVICE_SYNC_HOSTNAME = "sync_hostname"
 SERVICE_FORGET_UNIFI = "forget_unifi"
 
 ATTR_MAC = "mac"
+# Optional bei sync_hostname: freier Zielwert für Clients ohne HA-Gerät.
+ATTR_HOSTNAME = "hostname"
 
 # Frontend-Resource (Custom Card)
 CARD_URL = f"/{DOMAIN}/uniali-card.js"

@@ -27,15 +27,26 @@ sync_device:
 sync_hostname:
   name: Sync HA → UniFi-Hostname
   description: >-
-    Überschreibt den DHCP-Hostnamen des Clients in UniFi mit dem HA-Namen
-    (klein, DNS-tauglich). Getrennt vom Alias-Sync, weil UniFi aus dem
-    Hostnamen den lokalen DNS-Namen ableitet — die Änderung wirkt über die
-    Card hinaus.
+    Überschreibt den DHCP-Hostnamen des Clients in UniFi. Ohne `hostname` ist
+    die Quelle der HA-Name (klein, DNS-tauglich normalisiert); mit `hostname`
+    wird ein freier Wert gesetzt — der Weg für Clients ohne HA-Gerät.
+    Getrennt vom Alias-Sync, weil UniFi aus dem Hostnamen den lokalen
+    DNS-Namen ableitet — die Änderung wirkt über die Card hinaus.
   fields:
     mac:
       name: MAC
       description: MAC-Adresse des Ziel-Geräts.
       required: true
+      selector:
+        text:
+    hostname:
+      name: Hostname
+      description: >-
+        Freier Zielwert. Wird DNS-tauglich normalisiert (klein, Umlaute
+        ausgeschrieben, Trenner zu "-"). Leer lassen, um den HA-Namen zu
+        verwenden.
+      required: false
+      example: prusa-cam-01
       selector:
         text:
 
