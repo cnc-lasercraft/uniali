@@ -3,6 +3,23 @@
 Alle nennenswerten Änderungen an uniali. Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 Versionierung nach [SemVer](https://semver.org/lang/de/).
 
+## [1.1.0] — 2026-09-01
+
+### Neu
+
+- **Hostname-Sync** als eigene, vierte Aktion: `uniali.sync_hostname` schreibt
+  den HA-Namen in DNS-tauglicher Form (`Wärmeschublade` → `waermeschublade`)
+  als UniFi-Hostnamen. Gedacht für Geräte, die einen falschen oder veralteten
+  DHCP-Namen melden und sich nicht am Gerät selbst korrigieren lassen.
+  Bewusst **getrennt vom Alias-Sync**: UniFi leitet aus dem Hostnamen den
+  lokalen DNS-Namen ab, ein Klick wirkt also über die Card hinaus. Die Card
+  blendet Spalte und Knopf erst über den Toggle „Hostnamen" ein.
+  Der Vergleich läuft slug-normalisiert — `Shelly_Mini_DG_TV` und
+  `Shelly-Mini-DG-TV` gelten als deckungsgleich, sonst wäre praktisch jede
+  Zeile ein Hostname-Mismatch. Hostname-Abweichungen zählen **nicht** in den
+  Mismatch-Zähler des Sensors: die Aktion ist ein Sonderfall-Werkzeug, kein
+  Pflegeauftrag.
+
 ## [1.0.2] — 2026-09-01
 
 ### Geändert

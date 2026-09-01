@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, TypedDict
@@ -54,6 +55,16 @@ class UnialiEntry(TypedDict):
     in_sync_device: bool
     sync_unifi_possible: bool
     sync_device_possible: bool
+    # Hostname-Spalte: der DHCP-Hostname lässt sich in UniFi überschreiben
+    # (PUT /rest/user mit "hostname"). Eigene Aktion, bewusst getrennt vom
+    # Alias — ein Hostname zieht den lokalen DNS-Namen mit und ist damit
+    # invasiver. Verglichen wird slug-normalisiert, sonst gälte
+    # `Shelly_Mini_DG_TV` vs. `Shelly-Mini-DG-TV` als Unterschied.
+    in_sync_hostname: bool
+    sync_hostname_possible: bool
+    # Wert, den ein Klick schreiben würde (slug aus ha_name) — die Card zeigt
+    # ihn im Tooltip, damit sichtbar ist was passiert.
+    hostname_target: str | None
     conflict_unifi: str | None
     last_seen: str | None
     # UniFi-Schatten: HA-Device existiert nur weil die UniFi-Integration für
@@ -519,6 +530,15 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                     and device_ip is not None
                     and ha_name != device_name
                 )
+
+                hostname_target = _host_slug(ha_name)
+                in_sync_hostname = (
+                    hostname_target is not None
+                    and _host_slug(unifi.get("hostname")) == hostname_target
+                )
+                sync_hostname_possible = (
+                    hostname_target is not None and not in_sync_hostname
+                )
             else:
                 # Orphan: keine HA-Identität, keine Sync-Aktionen — nur Hygiene.
                 conflict_mac = None
@@ -526,6 +546,11 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 in_sync_device = True
                 sync_unifi_possible = False
                 sync_device_possible = False
+                # Karteileichen haben keinen HA-Namen als Quelle — nichts zu
+                # schreiben, und „in sync" hält sie aus der Mismatch-Zählung.
+                in_sync_hostname = True
+                sync_hostname_possible = False
+                hostname_target = None
 
             entries.append(
                 UnialiEntry(
@@ -541,6 +566,9 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                     in_sync_device=in_sync_device,
                     sync_unifi_possible=sync_unifi_possible,
                     sync_device_possible=sync_device_possible,
+                    in_sync_hostname=in_sync_hostname,
+                    sync_hostname_possible=sync_hostname_possible,
+                    hostname_target=hostname_target,
                     conflict_unifi=conflict_mac,
                     last_seen=_iso(unifi.get("last_seen")),
                     is_shadow=p["is_shadow"],
@@ -621,6 +649,68 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         # mit Stand vor dem zweiten Klick (UniFi-eventual-consistency).
         # User kann via ⟳ manuell verifizieren wenn gewünscht.
         self._optimistic_update(mac, unifi_alias=target["ha_name"])
+
+    async def async_sync_hostname(self, mac: str) -> None:
+        """Schreibt den HA-Namen (slug-normalisiert) als UniFi-Hostnamen.
+
+        Bewusst eine eigene Aktion und nicht Teil von `sync_unifi`: der Alias
+        ist reine UniFi-Kosmetik, der Hostname zieht den lokalen DNS-Namen
+        `<name>.<domain>` mit. Wer per Hostnamen auflöst (mDNS, `.local`,
+        Skripte), merkt eine Änderung — also nur auf ausdrücklichen Klick.
+        """
+        mac = _norm_mac(mac)
+        entries = self.data or []
+        target = next((e for e in entries if e["mac"] == mac), None)
+        if target is None or not target["sync_hostname_possible"]:
+            _LOGGER.warning("sync_hostname abgelehnt für %s (nicht möglich)", mac)
+            await async_senden(
+                self.hass,
+                TOPIC_SYNC_FEHLER,
+                "Hostname-Sync abgelehnt",
+                f"{_label(target) if target else mac}: Sync nicht möglich — "
+                "kein HA-Name oder veralteter Datenstand (Refresh nötig).",
+                severity="warnung",
+            )
+            return
+        if not target["unifi_id"]:
+            _LOGGER.warning("sync_hostname: kein UniFi-_id für %s — Refresh nötig", mac)
+            await async_senden(
+                self.hass,
+                TOPIC_SYNC_FEHLER,
+                "Hostname-Sync abgelehnt",
+                f"{_label(target)}: kein UniFi-_id bekannt — Refresh nötig.",
+                severity="warnung",
+            )
+            return
+        neuer_host = target["hostname_target"]
+        vorher = target["unifi_hostname"]
+        controller = await self._ensure_controller()
+        try:
+            await controller.request(
+                ApiRequest(
+                    method="put",
+                    path=f"/rest/user/{target['unifi_id']}",
+                    data={"hostname": neuer_host},
+                )
+            )
+        except Exception as err:  # noqa: BLE001
+            self._verwerfe_controller_bei_auth_fehler(err)
+            _LOGGER.exception("sync_hostname: Schreiben fehlgeschlagen für %s", mac)
+            await async_senden(
+                self.hass,
+                TOPIC_SYNC_FEHLER,
+                "Hostname-Sync fehlgeschlagen",
+                f"{_label(target)}: UniFi-API-Fehler beim Setzen des Hostnamens — {err}",
+                severity="warnung",
+            )
+            return
+        await async_senden(
+            self.hass,
+            TOPIC_SYNC_UNIFI,
+            "UniFi-Hostname gesetzt",
+            f"{target['ha_name']} ({mac}): Hostname {vorher or '—'} → {neuer_host}",
+        )
+        self._optimistic_update(mac, unifi_hostname=neuer_host)
 
     async def async_forget_unifi(self, mac: str) -> None:
         """Lässt UniFi den Client komplett vergessen (= Eintrag aus /rest/user
@@ -727,6 +817,7 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         *,
         unifi_alias: str | None = None,
         device_name: str | None = None,
+        unifi_hostname: str | None = None,
     ) -> None:
         """Mutiere die gecachte Liste sofort + pushe an Entities, damit die Card
         nach einem Sync-Klick nicht 5+ Sekunden auf den nächsten Refresh wartet.
@@ -755,6 +846,10 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 updated["device_name"] = device_name
                 updated["in_sync_device"] = updated["ha_name"] == device_name
                 updated["sync_device_possible"] = False
+            if unifi_hostname is not None:
+                updated["unifi_hostname"] = unifi_hostname
+                updated["in_sync_hostname"] = True
+                updated["sync_hostname_possible"] = False
             new_data.append(updated)  # type: ignore[arg-type]
         self.async_set_updated_data(new_data)
 
@@ -763,6 +858,34 @@ def _label(entry: UnialiEntry) -> str:
     """Kurzbezeichnung für Meldungen — bester verfügbarer Name plus MAC."""
     name = entry["ha_name"] or entry["unifi_alias"] or entry["unifi_hostname"]
     return f"{name} ({entry['mac']})" if name else entry["mac"]
+
+
+# Umlaute vor dem Strippen ausschreiben — sonst würde aus „Wärmeschublade"
+# ein „wrmeschublade" statt „waermeschublade".
+_HOST_ERSATZ = {
+    "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+    "à": "a", "á": "a", "â": "a", "è": "e", "é": "e", "ê": "e",
+    "ì": "i", "í": "i", "ò": "o", "ó": "o", "ô": "o", "ù": "u", "ú": "u",
+}
+
+
+def _host_slug(name: str | None) -> str | None:
+    """DNS-taugliche Form eines Namens.
+
+    Dient zwei Zwecken: als Schreibwert für den UniFi-Hostnamen und als
+    Vergleichsform. Ohne die Normalisierung würde jeder Shelly als Hostname-
+    Mismatch gelten (`Shelly_Mini_DG_TV` vs. `Shelly-Mini-DG-TV`).
+    """
+    if not name:
+        return None
+    s = name.strip().lower()
+    for a, b in _HOST_ERSATZ.items():
+        s = s.replace(a, b)
+    s = re.sub(r"[\s_.]+", "-", s)
+    s = re.sub(r"[^a-z0-9-]", "", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    # RFC 1035: ein Label darf höchstens 63 Zeichen haben.
+    return s[:63].rstrip("-") or None
 
 
 def _norm_mac(mac: str | None) -> str:

@@ -19,6 +19,7 @@ from .const import (
     SERVICE_FORGET_UNIFI,
     SERVICE_REFRESH,
     SERVICE_SYNC_DEVICE,
+    SERVICE_SYNC_HOSTNAME,
     SERVICE_SYNC_UNIFI,
 )
 from .coordinator import UnialiCoordinator
@@ -119,7 +120,7 @@ async def _async_register_card(hass: HomeAssistant) -> None:
 def _async_register_services(
     hass: HomeAssistant, coordinator: UnialiCoordinator
 ) -> None:
-    """Registriert die drei uniali-Services."""
+    """Registriert die uniali-Services."""
     if hass.services.has_service(DOMAIN, SERVICE_REFRESH):
         return
 
@@ -140,6 +141,12 @@ def _async_register_services(
             if isinstance(coord, UnialiCoordinator):
                 await coord.async_sync_device(mac)
 
+    async def _sync_hostname(call: ServiceCall) -> None:
+        mac = call.data[ATTR_MAC]
+        for coord in hass.data[DOMAIN].values():
+            if isinstance(coord, UnialiCoordinator):
+                await coord.async_sync_hostname(mac)
+
     async def _forget_unifi(call: ServiceCall) -> None:
         mac = call.data[ATTR_MAC]
         for coord in hass.data[DOMAIN].values():
@@ -152,6 +159,9 @@ def _async_register_services(
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_DEVICE, _sync_device, schema=SERVICE_SYNC_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_HOSTNAME, _sync_hostname, schema=SERVICE_SYNC_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_FORGET_UNIFI, _forget_unifi, schema=SERVICE_SYNC_SCHEMA

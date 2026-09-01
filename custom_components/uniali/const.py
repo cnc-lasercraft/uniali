@@ -20,6 +20,7 @@ LABEL_OPT_OUT = "unifi_sync_ignore"
 SERVICE_REFRESH = "refresh"
 SERVICE_SYNC_UNIFI = "sync_unifi"
 SERVICE_SYNC_DEVICE = "sync_device"
+SERVICE_SYNC_HOSTNAME = "sync_hostname"
 SERVICE_FORGET_UNIFI = "forget_unifi"
 
 ATTR_MAC = "mac"

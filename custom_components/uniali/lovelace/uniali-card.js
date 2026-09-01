@@ -18,6 +18,10 @@ class UnialiCard extends HTMLElement {
     // "audit" = Standard-3-Spalten-Sync. "hygiene" = Karteileichen-Cleanup mit
     // Last-Seen, Warnungen und Forget-Knopf.
     this._mode = "audit";
+    // Hostname-Spalte ist default aus: sie betrifft nur Sonderfälle (Gerät
+    // meldet einen falschen/legacy DHCP-Namen) und würde die Tabelle sonst
+    // für alle um zwei Spalten verbreitern.
+    this._showHostname = false;
   }
 
   setConfig(config) {
@@ -106,7 +110,8 @@ class UnialiCard extends HTMLElement {
       this.shadowRoot.innerHTML = this._baseHtml();
       this._wireHeader();
     }
-    // Mode-spezifischen thead rendern (wechselt zwischen 5 und 6 Spalten)
+    // Mode-spezifischen thead rendern (Audit 5 bzw. 7 Spalten mit Hostname,
+    // Hygiene 6) — muss vor den Zeilen laufen, die Spaltenzahl muss passen.
     this._renderThead();
 
     const tbody = this.shadowRoot.querySelector("tbody");
@@ -167,6 +172,10 @@ class UnialiCard extends HTMLElement {
             <input type="checkbox" id="show-shadow" />
             UniFi-Schatten anzeigen <span class="badge"></span>
           </label>
+          <label class="filter audit-only" title="DHCP-Hostname des Clients mit eigenem Sync-Knopf. UniFi leitet daraus den lokalen DNS-Namen ab — deshalb getrennt vom Alias.">
+            <input type="checkbox" id="show-hostname" />
+            Hostnamen
+          </label>
           <input type="search" class="search" placeholder="filter…" autocomplete="off" />
           <span class="filter-hint"></span>
           <button class="refresh" title="Refresh">⟳</button>
@@ -201,6 +210,7 @@ class UnialiCard extends HTMLElement {
           <th data-sort="ha_name" class="sortable">HA-Name <span class="sort-ind"></span></th>
           <th></th>
           <th data-sort="unifi_alias" class="sortable">UniFi-Alias <span class="sort-ind"></span></th>
+          ${this._showHostname ? '<th></th><th data-sort="unifi_hostname" class="sortable">Hostname <span class="sort-ind"></span></th>' : ""}
           <th></th>
           <th data-sort="device_name" class="sortable">Geräte-Name <span class="sort-ind"></span></th>
         </tr>
@@ -309,6 +319,10 @@ class UnialiCard extends HTMLElement {
       this._showShadows = ev.target.checked;
       this._render();
     });
+    this.shadowRoot.querySelector("#show-hostname").addEventListener("change", (ev) => {
+      this._showHostname = ev.target.checked;
+      this._render();
+    });
     const search = this.shadowRoot.querySelector(".search");
     search.addEventListener("input", (ev) => {
       this._search = ev.target.value.trim();
@@ -383,6 +397,10 @@ class UnialiCard extends HTMLElement {
     tr.appendChild(this._cellHa(e));
     tr.appendChild(this._arrowUnifi(e));
     tr.appendChild(this._cellUnifi(e));
+    if (this._showHostname) {
+      tr.appendChild(this._arrowHostname(e));
+      tr.appendChild(this._cellHostname(e));
+    }
     tr.appendChild(this._arrowDevice(e));
     tr.appendChild(this._cellDevice(e));
     return tr;
@@ -514,6 +532,44 @@ class UnialiCard extends HTMLElement {
     } else {
       td.textContent = "·";
       td.classList.add("idle");
+    }
+    return td;
+  }
+
+  // Hostname-Spalte (optional): der DHCP-Name, den das Gerät selbst meldet.
+  _cellHostname(e) {
+    const td = document.createElement("td");
+    td.className = "name";
+    if (e.unifi_hostname) {
+      td.textContent = e.unifi_hostname;
+    } else {
+      td.textContent = "—";
+      td.classList.add("empty");
+    }
+    return td;
+  }
+
+  _arrowHostname(e) {
+    const td = document.createElement("td");
+    td.className = "arrow";
+    if (e.sync_hostname_possible) {
+      const btn = document.createElement("button");
+      btn.className = "sync-btn overwrite";
+      btn.textContent = "⇨";
+      btn.title =
+        `Hostname "${e.unifi_hostname || "—"}" → "${e.hostname_target}" setzen.\n` +
+        "Achtung: UniFi leitet daraus den lokalen DNS-Namen ab.";
+      btn.dataset.action = "sync_hostname";
+      btn.dataset.mac = e.mac;
+      td.appendChild(btn);
+    } else if (e.in_sync_hostname && e.ha_known) {
+      td.textContent = "✓";
+      td.classList.add("ok");
+      td.title = "in sync (Vergleich ohne Gross-/Kleinschreibung und Trennzeichen)";
+    } else {
+      td.textContent = "·";
+      td.classList.add("idle");
+      td.title = e.ha_known ? "" : "Kein HA-Name als Quelle";
     }
     return td;
   }

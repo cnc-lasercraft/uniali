@@ -24,6 +24,21 @@ sync_device:
       selector:
         text:
 
+sync_hostname:
+  name: Sync HA → UniFi-Hostname
+  description: >-
+    Überschreibt den DHCP-Hostnamen des Clients in UniFi mit dem HA-Namen
+    (klein, DNS-tauglich). Getrennt vom Alias-Sync, weil UniFi aus dem
+    Hostnamen den lokalen DNS-Namen ableitet — die Änderung wirkt über die
+    Card hinaus.
+  fields:
+    mac:
+      name: MAC
+      description: MAC-Adresse des Ziel-Geräts.
+      required: true
+      selector:
+        text:
+
 forget_unifi:
   name: UniFi-Client vergessen
   description: >-
