@@ -29,5 +29,16 @@
         "name": "Aliases"
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "uniali — Optionen",
+        "description": "Leer lassen: uniali übernimmt das Suffix der lokalen DNS-Records, die auf der Site schon existieren.",
+        "data": {
+          "dns_domain": "Domain für lokale DNS-Records (z.B. example.ch)"
+        }
+      }
+    }
   }
 }

@@ -15,11 +15,13 @@ from homeassistant.loader import async_get_integration
 
 from .const import (
     ATTR_HOSTNAME,
+    ATTR_IGNORE,
     ATTR_MAC,
     CARD_URL,
     DOMAIN,
     SERVICE_FORGET_UNIFI,
     SERVICE_REFRESH,
+    SERVICE_SET_IGNORE,
     SERVICE_SYNC_DEVICE,
     SERVICE_SYNC_HOSTNAME,
     SERVICE_SYNC_UNIFI,
@@ -37,12 +39,20 @@ SERVICE_SYNC_SCHEMA = vol.Schema({vol.Required(ATTR_MAC): cv.string})
 SERVICE_HOSTNAME_SCHEMA = vol.Schema(
     {vol.Required(ATTR_MAC): cv.string, vol.Optional(ATTR_HOSTNAME): cv.string}
 )
+SERVICE_IGNORE_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_MAC): cv.string, vol.Required(ATTR_IGNORE): cv.boolean}
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up uniali via Config Entry."""
     coordinator = UnialiCoordinator(hass, entry)
+    # Stummgeschaltete Zeilen und zuletzt geschriebene Hostnamen liegen im
+    # HA-Storage — muss vor dem ersten Refresh da sein, sonst zählt der erste
+    # Sensor-Wert ignorierte Zeilen mit.
+    await coordinator.store.async_load()
     await coordinator.async_config_entry_first_refresh()
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -53,6 +63,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Options geändert (DNS-Domain) — Refresh, damit die DNS-Ziele neu
+    berechnet werden. Kein Reload nötig, der Coordinator liest die Option
+    bei jedem Durchlauf."""
+    coordinator = hass.data[DOMAIN].get(entry.entry_id)
+    if isinstance(coordinator, UnialiCoordinator):
+        await coordinator.async_request_refresh()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -182,6 +201,13 @@ def _async_register_services(
             if isinstance(coord, UnialiCoordinator):
                 await coord.async_sync_hostname(mac, hostname)
 
+    async def _set_ignore(call: ServiceCall) -> None:
+        mac = call.data[ATTR_MAC]
+        ignore = call.data[ATTR_IGNORE]
+        for coord in hass.data[DOMAIN].values():
+            if isinstance(coord, UnialiCoordinator):
+                coord.set_ignoriert(mac, ignore)
+
     async def _forget_unifi(call: ServiceCall) -> None:
         mac = call.data[ATTR_MAC]
         for coord in hass.data[DOMAIN].values():
@@ -197,6 +223,9 @@ def _async_register_services(
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_HOSTNAME, _sync_hostname, schema=SERVICE_HOSTNAME_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_IGNORE, _set_ignore, schema=SERVICE_IGNORE_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_FORGET_UNIFI, _forget_unifi, schema=SERVICE_SYNC_SCHEMA

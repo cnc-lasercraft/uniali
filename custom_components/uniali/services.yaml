@@ -25,13 +25,16 @@ sync_device:
         text:
 
 sync_hostname:
-  name: Sync HA → UniFi-Hostname
+  name: Sync HA → UniFi-Hostname + DNS
   description: >-
-    Überschreibt den DHCP-Hostnamen des Clients in UniFi. Ohne `hostname` ist
+    Setzt den Hostnamen des Clients in UniFi UND einen lokalen DNS-Record
+    `<name>.<domain>`; ist noch keine DHCP-Reservation vorhanden, wird sie
+    dafür angelegt (UniFi verlangt sie für DNS-Records). Ohne `hostname` ist
     die Quelle der HA-Name (klein, DNS-tauglich normalisiert); mit `hostname`
     wird ein freier Wert gesetzt — der Weg für Clients ohne HA-Gerät.
-    Getrennt vom Alias-Sync, weil UniFi aus dem Hostnamen den lokalen
-    DNS-Namen ableitet — die Änderung wirkt über die Card hinaus.
+    Der Hostname allein hält nicht: meldet das Gerät per DHCP seinen eigenen
+    Namen (Shelly, ESPHome, Protect-Kameras), überschreibt UniFi ihn beim
+    nächsten Lease. Der DNS-Record bleibt.
   fields:
     mac:
       name: MAC
@@ -63,3 +66,23 @@ forget_unifi:
       required: true
       selector:
         text:
+
+set_ignore:
+  name: Zeile stummschalten
+  description: >-
+    Nimmt eine Zeile aus Mismatch-Zähler und Mismatch-Filter (oder holt sie
+    zurück). Die Zeile bleibt sichtbar — für Abweichungen, die man kennt und
+    bewusst stehen lässt.
+  fields:
+    mac:
+      name: MAC
+      description: MAC-Adresse der Zeile.
+      required: true
+      selector:
+        text:
+    ignore:
+      name: Stummschalten
+      description: true = ignorieren, false = wieder mitzählen.
+      required: true
+      selector:
+        boolean:

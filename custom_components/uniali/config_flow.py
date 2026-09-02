@@ -8,10 +8,17 @@ import voluptuous as vol
 from aiounifi import Controller, LoginRequired, ResponseError
 from aiounifi.models.configuration import Configuration
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client
 
 from .const import (
+    CONF_DNS_DOMAIN,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
@@ -60,6 +67,40 @@ class UnialiConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:
+        return UnialiOptionsFlow()
+
+
+class UnialiOptionsFlow(OptionsFlow):
+    """Nur eine Option: das Suffix für lokale DNS-Records.
+
+    Leer lassen ist der Normalfall — der Coordinator liest das häufigste
+    Suffix aus den DNS-Records, die auf der Site schon existieren. Nötig ist
+    das Feld nur, wenn noch gar kein Record da ist oder mehrere Domains
+    parallel laufen.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            domain = (user_input.get(CONF_DNS_DOMAIN) or "").strip().lstrip(".")
+            return self.async_create_entry(data={CONF_DNS_DOMAIN: domain})
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_DNS_DOMAIN,
+                        default=self.config_entry.options.get(CONF_DNS_DOMAIN, ""),
+                    ): str
+                }
+            ),
         )
 
 

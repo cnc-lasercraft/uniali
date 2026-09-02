@@ -60,12 +60,12 @@ class UnialiSensor(CoordinatorEntity[UnialiCoordinator], SensorEntity):
 
     @property
     def native_value(self) -> int:
+        # `mismatch` kommt fertig aus dem Coordinator (Alias, Gerätename,
+        # DNS-Record, Alias-Konflikt — abzüglich stummgeschalteter Zeilen).
+        # Bewusst dort zentral, damit Sensor-Zahl und Card-Filter nicht
+        # auseinanderlaufen.
         entries = self.coordinator.data or []
-        return sum(
-            1
-            for e in entries
-            if e["sync_unifi_possible"] or e["sync_device_possible"]
-        )
+        return sum(1 for e in entries if e["mismatch"])
 
     @property
     def extra_state_attributes(self) -> dict:

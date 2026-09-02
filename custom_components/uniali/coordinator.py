@@ -21,6 +21,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .adapters import ADAPTERS
 from .adapters.base import DeviceAdapter
 from .const import (
+    CONF_DNS_DOMAIN,
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
@@ -38,6 +39,7 @@ from .herold import (
     TOPIC_VERBINDUNG_FEHLER,
     async_senden,
 )
+from .store import UnialiStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,15 +58,39 @@ class UnialiEntry(TypedDict):
     sync_unifi_possible: bool
     sync_device_possible: bool
     # Hostname-Spalte: der DHCP-Hostname lässt sich in UniFi überschreiben
-    # (PUT /rest/user mit "hostname"). Eigene Aktion, bewusst getrennt vom
-    # Alias — ein Hostname zieht den lokalen DNS-Namen mit und ist damit
-    # invasiver. Verglichen wird slug-normalisiert, sonst gälte
-    # `Shelly_Mini_DG_TV` vs. `Shelly-Mini-DG-TV` als Unterschied.
+    # (PUT /rest/user mit "hostname"), aber er gehört UniFi nicht dauerhaft —
+    # der Controller lernt ihn aus DHCP-Option-12/mDNS und überschreibt den
+    # API-Wert beim nächsten Lease. Deshalb schreibt derselbe Klick zusätzlich
+    # einen echten lokalen DNS-Record (siehe unten), der bleibt.
+    # Verglichen wird slug-normalisiert, sonst gälte `Shelly_Mini_DG_TV` vs.
+    # `Shelly-Mini-DG-TV` als Unterschied.
     in_sync_hostname: bool
     sync_hostname_possible: bool
     # Wert, den ein Klick schreiben würde (slug aus ha_name) — die Card zeigt
     # ihn im Tooltip, damit sichtbar ist was passiert.
     hostname_target: str | None
+    # True, wenn uniali den Hostnamen schon einmal gesetzt hat und UniFi
+    # inzwischen wieder etwas anderes zeigt: das Gerät meldet seinen Namen
+    # selbst (Shelly, ESPHome, Protect-Kamera). Gegen solche Geräte ist der
+    # Hostname nicht zu gewinnen — die Zeile zählt deshalb nicht als Mismatch,
+    # der DNS-Record daneben schon.
+    hostname_volatile: bool
+    # Lokaler DNS-Record (`local_dns_record`) — das persistente Gegenstück zum
+    # flüchtigen Hostnamen. UniFi verlangt dafür eine DHCP-Reservation
+    # (`api.err.LocalDnsRecordRequiresFixedIp`), die uniali beim Schreiben
+    # gleich mit anlegt.
+    unifi_dns_record: str | None
+    dns_target: str | None
+    in_sync_dns: bool
+    sync_dns_possible: bool
+    # Aktuelle IP aus /stat/sta — nur damit lässt sich eine Reservation
+    # anlegen. None = Client offline, DNS-Teil des Klicks entfällt.
+    unifi_ip: str | None
+    # Vom User stummgeschaltete Zeile: bleibt sichtbar, zählt aber nicht.
+    ignored: bool
+    # Zentrale Mismatch-Definition — Sensor und Card lesen beide dieses Feld,
+    # damit „X offen" und der Filter nie auseinanderlaufen.
+    mismatch: bool
     conflict_unifi: str | None
     last_seen: str | None
     # UniFi-Schatten: HA-Device existiert nur weil die UniFi-Integration für
@@ -99,6 +125,11 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         self.entry = entry
         self._controller: Controller | None = None
         self._adapters: list[DeviceAdapter] = [cls(hass) for cls in ADAPTERS]
+        self.store = UnialiStore(hass)
+        # Suffix für lokale DNS-Records. Kommt entweder aus den Options oder
+        # wird bei jedem Refresh aus den bereits vorhandenen Records der Site
+        # abgeleitet — siehe _dns_domain_ermitteln.
+        self._dns_domain: str | None = None
 
     async def _ensure_controller(self) -> Controller:
         if self._controller is not None:
@@ -140,6 +171,31 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         if isinstance(err, (Forbidden, LoginRequired, Unauthorized)):
             self._controller = None
             _LOGGER.debug("Auth-Fehler (%s) — Controller-Session verworfen", type(err).__name__)
+
+    def _dns_domain_ermitteln(self, users_raw: list[dict[str, Any]]) -> str | None:
+        """Suffix für neue DNS-Records: Option gewinnt, sonst Mehrheit der Site.
+
+        Ein lokaler DNS-Record ist ein FQDN (`proxmox2.sood4.ch`) — die Domain
+        steht nirgends in der UniFi-Konfiguration, sie steckt nur in den
+        Records selbst (die Netzwerk-`domain_name` ist regelmässig
+        `localdomain` oder leer und damit unbrauchbar). Statt den User nach
+        etwas zu fragen, was seine Site längst weiss, nehmen wir das häufigste
+        Suffix der vorhandenen Records. Erst wenn es keinen einzigen gibt,
+        braucht es die Option.
+        """
+        aus_option = (self.entry.options.get(CONF_DNS_DOMAIN) or "").strip().lstrip(".")
+        if aus_option:
+            return aus_option
+
+        zaehler: dict[str, int] = defaultdict(int)
+        for raw in users_raw:
+            record = raw.get("local_dns_record")
+            if not record or "." not in record:
+                continue
+            zaehler[record.split(".", 1)[1].lower()] += 1
+        if not zaehler:
+            return None
+        return max(zaehler.items(), key=lambda kv: kv[1])[0]
 
     async def _async_update_data(self) -> list[UnialiEntry]:
         # clients_all = /rest/user (alias-DB, source of truth für _id)
@@ -187,12 +243,21 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 "ip": None,  # wird aus aktiven Clients ergänzt
                 "_id": raw.get("_id"),
                 "last_seen": raw.get("last_seen"),
-                # use_fixedip = UniFi-DHCP-Reservation → Hygiene-Warnsignal vor Forget
+                # use_fixedip = UniFi-DHCP-Reservation → Hygiene-Warnsignal vor
+                # Forget, und Voraussetzung für einen lokalen DNS-Record.
                 "use_fixedip": bool(raw.get("use_fixedip")),
+                "dns_record": (
+                    raw.get("local_dns_record")
+                    if raw.get("local_dns_record_enabled")
+                    else None
+                )
+                or None,
                 "is_wired": bool(raw.get("is_wired")),
             }
             if alias:
                 alias_to_macs[alias].append(mac)
+
+        self._dns_domain = self._dns_domain_ermitteln(users_raw)
 
         # IP + frisches last_seen + ggf. aktuellerer Hostname aus aktiven Clients
         for raw in sta_raw:
@@ -536,9 +601,6 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                     hostname_target is not None
                     and _host_slug(unifi.get("hostname")) == hostname_target
                 )
-                sync_hostname_possible = (
-                    hostname_target is not None and not in_sync_hostname
-                )
             else:
                 # Orphan: keine HA-Identität, keine Sync-Aktionen — nur Hygiene.
                 conflict_mac = None
@@ -549,42 +611,80 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 # Karteileichen haben keinen HA-Namen als Quelle — nichts zu
                 # schreiben, und „in sync" hält sie aus der Mismatch-Zählung.
                 in_sync_hostname = True
-                sync_hostname_possible = False
                 hostname_target = None
 
-            entries.append(
-                UnialiEntry(
-                    mac=mac,
-                    ha_name=ha_name,
-                    unifi_alias=unifi_alias,
-                    unifi_hostname=unifi.get("hostname"),
-                    unifi_id=unifi.get("_id"),
-                    device_name=device_name,
-                    device_ip=device_ip,
-                    adapter_id=adapter_id,
-                    in_sync_unifi=in_sync_unifi,
-                    in_sync_device=in_sync_device,
-                    sync_unifi_possible=sync_unifi_possible,
-                    sync_device_possible=sync_device_possible,
-                    in_sync_hostname=in_sync_hostname,
-                    sync_hostname_possible=sync_hostname_possible,
-                    hostname_target=hostname_target,
-                    conflict_unifi=conflict_mac,
-                    last_seen=_iso(unifi.get("last_seen")),
-                    is_shadow=p["is_shadow"],
-                    interfaces=p.get("interfaces"),
-                    device_id=p["device"].id if p.get("device") else None,
-                    ha_known=ha_known,
-                    ha_orphan=p.get("ha_orphan", False),
-                    use_fixedip=bool(unifi.get("use_fixedip")),
-                    is_wired=bool(unifi.get("is_wired")),
-                )
+            # DNS-Record: gleiche Quelle wie der Hostname, nur als FQDN. Ohne
+            # bekannte Domain gibt es kein Ziel und damit keinen DNS-Teil.
+            dns_record = unifi.get("dns_record")
+            dns_target = (
+                f"{hostname_target}.{self._dns_domain}"
+                if hostname_target and self._dns_domain
+                else None
+            )
+            in_sync_dns = dns_target is not None and (
+                (dns_record or "").lower() == dns_target
+            )
+            sync_dns_possible = dns_target is not None and not in_sync_dns
+
+            # Hat uniali den Hostnamen hier schon einmal gesetzt und UniFi
+            # zeigt trotzdem etwas anderes? Dann meldet das Gerät seinen Namen
+            # selbst und drückt ihn beim nächsten DHCP-Lease wieder durch.
+            geschrieben = self.store.hostname_geschrieben.get(mac)
+            hostname_volatile = bool(
+                geschrieben
+                and _host_slug(unifi.get("hostname")) != _host_slug(geschrieben)
+            )
+            # Knopf anbieten, solange irgendeine der beiden Seiten abweicht —
+            # ein Klick schreibt beides.
+            sync_hostname_possible = hostname_target is not None and (
+                not in_sync_hostname or sync_dns_possible
             )
 
+            ignored = mac in self.store.ignoriert
+
+            entry = UnialiEntry(
+                mac=mac,
+                ha_name=ha_name,
+                unifi_alias=unifi_alias,
+                unifi_hostname=unifi.get("hostname"),
+                unifi_id=unifi.get("_id"),
+                device_name=device_name,
+                device_ip=device_ip,
+                adapter_id=adapter_id,
+                in_sync_unifi=in_sync_unifi,
+                in_sync_device=in_sync_device,
+                sync_unifi_possible=sync_unifi_possible,
+                sync_device_possible=sync_device_possible,
+                in_sync_hostname=in_sync_hostname,
+                sync_hostname_possible=sync_hostname_possible,
+                hostname_target=hostname_target,
+                hostname_volatile=hostname_volatile,
+                unifi_dns_record=dns_record,
+                dns_target=dns_target,
+                in_sync_dns=in_sync_dns,
+                sync_dns_possible=sync_dns_possible,
+                unifi_ip=unifi.get("ip"),
+                ignored=ignored,
+                conflict_unifi=conflict_mac,
+                last_seen=_iso(unifi.get("last_seen")),
+                is_shadow=p["is_shadow"],
+                interfaces=p.get("interfaces"),
+                device_id=p["device"].id if p.get("device") else None,
+                ha_known=ha_known,
+                ha_orphan=p.get("ha_orphan", False),
+                use_fixedip=bool(unifi.get("use_fixedip")),
+                is_wired=bool(unifi.get("is_wired")),
+                mismatch=False,  # gleich unten aus dem fertigen Eintrag
+            )
+            entry["mismatch"] = _ist_mismatch(entry)
+            entries.append(entry)
+
         # Sortierung: Mismatches oben, dann ha_known-Devices, dann alphabetisch.
+        # Bewusst über das zentrale `mismatch`-Feld — so wandern stummgeschaltete
+        # Zeilen nach unten, statt oben Aufmerksamkeit zu beanspruchen.
         entries.sort(
             key=lambda e: (
-                e["in_sync_unifi"] and (e["in_sync_device"] or e["adapter_id"] is None),
+                not e["mismatch"],
                 not e["ha_known"],  # ha_known=True zuerst
                 (e["ha_name"] or e["unifi_alias"] or e["unifi_hostname"] or e["mac"] or "").casefold(),
             )
@@ -653,12 +753,18 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
     async def async_sync_hostname(
         self, mac: str, hostname: str | None = None
     ) -> None:
-        """Schreibt einen Hostnamen (slug-normalisiert) in den UniFi-Client.
+        """Setzt Hostname *und* lokalen DNS-Record des UniFi-Clients.
 
         Bewusst eine eigene Aktion und nicht Teil von `sync_unifi`: der Alias
-        ist reine UniFi-Kosmetik, der Hostname zieht den lokalen DNS-Namen
-        `<name>.<domain>` mit. Wer per Hostnamen auflöst (mDNS, `.local`,
-        Skripte), merkt eine Änderung — also nur auf ausdrücklichen Klick.
+        ist reine UniFi-Kosmetik, dieser Klick wirkt über die Card hinaus — er
+        legt bei Bedarf eine DHCP-Reservation an und einen DNS-Namen
+        `<name>.<domain>`, unter dem das Gerät danach im ganzen Netz auflöst.
+
+        Warum beides: der `hostname` allein hält nicht. UniFi lernt ihn aus
+        DHCP-Option-12/mDNS und überschreibt den API-Wert beim nächsten Lease,
+        sobald das Gerät seinen eigenen Namen meldet (Shelly, ESPHome,
+        Protect-Kameras). Stille Geräte behalten ihn — deshalb wird er
+        weiterhin geschrieben, nur eben nicht mehr als einziges.
 
         Ohne `hostname` ist die Quelle der HA-Name der Zeile. Mit `hostname`
         wird ein freier Wert geschrieben — der Weg für reine UniFi-Clients
@@ -715,13 +821,40 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
             )
             return
         vorher = target["unifi_hostname"]
+        payload: dict[str, Any] = {"hostname": neuer_host}
+
+        # DNS-Teil: nur mit bekannter Domain, und nur mit einer IP, auf die
+        # sich eine Reservation setzen lässt. Ein Client, der gerade offline
+        # ist, hat keine — seine letzte IP kann längst woanders hängen, eine
+        # Reservation darauf wäre geraten. Dann bleibt es beim Hostnamen.
+        dns_ziel = (
+            f"{neuer_host}.{self._dns_domain}"
+            if neuer_host and self._dns_domain
+            else None
+        )
+        dns_hinweis = ""
+        if dns_ziel and target["use_fixedip"]:
+            # Reservation existiert schon — IP nicht anfassen, nur den Record.
+            payload["local_dns_record"] = dns_ziel
+            payload["local_dns_record_enabled"] = True
+        elif dns_ziel and target["unifi_ip"]:
+            payload["use_fixedip"] = True
+            payload["fixed_ip"] = target["unifi_ip"]
+            payload["local_dns_record"] = dns_ziel
+            payload["local_dns_record_enabled"] = True
+        elif dns_ziel:
+            dns_hinweis = " (ohne DNS-Record — Client offline, keine IP für die Reservation)"
+            dns_ziel = None
+        elif neuer_host:
+            dns_hinweis = " (ohne DNS-Record — keine Domain bekannt, siehe Optionen)"
+
         controller = await self._ensure_controller()
         try:
             await controller.request(
                 ApiRequest(
                     method="put",
                     path=f"/rest/user/{target['unifi_id']}",
-                    data={"hostname": neuer_host},
+                    data=payload,
                 )
             )
         except Exception as err:  # noqa: BLE001
@@ -735,13 +868,42 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
                 severity="warnung",
             )
             return
+        # Geschriebenen Wert merken: weicht der Hostname beim nächsten Refresh
+        # wieder ab, meldet das Gerät seinen Namen selbst (→ hostname_volatile).
+        if neuer_host:
+            self.store.merke_hostname(mac, neuer_host)
         await async_senden(
             self.hass,
             TOPIC_SYNC_UNIFI,
             "UniFi-Hostname gesetzt",
-            f"{_label(target)}: Hostname {vorher or '—'} → {neuer_host}",
+            f"{_label(target)}: Hostname {vorher or '—'} → {neuer_host}"
+            + (f", DNS-Record {dns_ziel}" if dns_ziel else dns_hinweis),
         )
-        self._optimistic_update(mac, unifi_hostname=neuer_host)
+        self._optimistic_update(
+            mac,
+            unifi_hostname=neuer_host,
+            unifi_dns_record=dns_ziel,
+            fixedip_gesetzt="fixed_ip" in payload,
+        )
+
+    def set_ignoriert(self, mac: str, ignorieren: bool) -> None:
+        """Schaltet eine Zeile für Mismatch-Zähler und -Filter stumm (oder
+        wieder laut). Die Zeile bleibt sichtbar — Stummschalten ist kein
+        Verstecken, sonst verliert man sie aus dem Blick."""
+        mac = _norm_mac(mac)
+        self.store.set_ignoriert(mac, ignorieren)
+        if not self.data:
+            return
+        new_data: list[UnialiEntry] = []
+        for e in self.data:
+            if e["mac"] != mac:
+                new_data.append(e)
+                continue
+            updated = dict(e)
+            updated["ignored"] = ignorieren
+            updated["mismatch"] = _ist_mismatch(updated)  # type: ignore[arg-type]
+            new_data.append(updated)  # type: ignore[arg-type]
+        self.async_set_updated_data(new_data)
 
     async def async_forget_unifi(self, mac: str) -> None:
         """Lässt UniFi den Client komplett vergessen (= Eintrag aus /rest/user
@@ -779,6 +941,9 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
             )
             await self.async_request_refresh()
             return
+        # Der Client ist weg — unsere Notizen dazu (Stummschaltung, zuletzt
+        # geschriebener Hostname) hätten sonst ewig Bestand.
+        self.store.vergiss_mac(mac)
         await async_senden(
             self.hass,
             TOPIC_CLIENT_VERGESSEN,
@@ -849,6 +1014,8 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
         unifi_alias: str | None = None,
         device_name: str | None = None,
         unifi_hostname: str | None = None,
+        unifi_dns_record: str | None = None,
+        fixedip_gesetzt: bool = False,
     ) -> None:
         """Mutiere die gecachte Liste sofort + pushe an Entities, damit die Card
         nach einem Sync-Klick nicht 5+ Sekunden auf den nächsten Refresh wartet.
@@ -880,9 +1047,49 @@ class UnialiCoordinator(DataUpdateCoordinator[list[UnialiEntry]]):
             if unifi_hostname is not None:
                 updated["unifi_hostname"] = unifi_hostname
                 updated["in_sync_hostname"] = True
-                updated["sync_hostname_possible"] = False
+                # Ob der Wert hält, weiss erst der nächste Refresh — bis dahin
+                # gilt er als gesetzt und die Zeile ist nicht mehr flüchtig.
+                updated["hostname_volatile"] = False
+            if unifi_dns_record is not None:
+                updated["unifi_dns_record"] = unifi_dns_record
+                updated["in_sync_dns"] = True
+                updated["sync_dns_possible"] = False
+            if fixedip_gesetzt:
+                updated["use_fixedip"] = True
+            if unifi_hostname is not None or unifi_dns_record is not None:
+                updated["sync_hostname_possible"] = bool(
+                    updated["sync_dns_possible"] or not updated["in_sync_hostname"]
+                )
+            # Mismatch neu bewerten — Sensor und Filter hängen daran.
+            updated["mismatch"] = _ist_mismatch(updated)  # type: ignore[arg-type]
             new_data.append(updated)  # type: ignore[arg-type]
         self.async_set_updated_data(new_data)
+
+
+def _ist_mismatch(e: UnialiEntry) -> bool:
+    """Die eine Mismatch-Definition — Sensor, Card-Filter und Sortierung lesen
+    alle dieses Ergebnis.
+
+    Zwei bewusste Abgrenzungen in der Hostname-Spalte:
+
+    1. Ein *fehlender* DNS-Record ist keine Abweichung, sondern ein nie
+       eingerichteter Sonderfall. Zählte er mit, stünden auf einen Schlag alle
+       ~180 HA-Geräte im Audit, und jeder Klick zur Beruhigung würde eine
+       DHCP-Reservation anlegen. Gezählt wird nur echte Drift: ein Record ist
+       da und zeigt etwas anderes.
+    2. Ein zurückgefallener Hostname zählt nicht. Gegen ein Gerät, das seinen
+       Namen per DHCP selbst meldet, ist er nicht zu gewinnen — das Audit
+       stünde dauerhaft auf Alarm für etwas, das kein Klick heilt.
+    """
+    if e["ignored"]:
+        return False
+    if e["sync_unifi_possible"] or e["sync_device_possible"] or e["conflict_unifi"]:
+        return True
+    if e["hostname_target"] is None:
+        return False
+    dns_drift = bool(e["unifi_dns_record"]) and e["sync_dns_possible"]
+    hostname_drift = not e["in_sync_hostname"] and not e["hostname_volatile"]
+    return dns_drift or hostname_drift
 
 
 def _label(entry: UnialiEntry) -> str:

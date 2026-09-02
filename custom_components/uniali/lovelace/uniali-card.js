@@ -83,9 +83,10 @@ class UnialiCard extends HTMLElement {
         ? entries.filter((e) => e.ha_known !== false)
         : entries.filter((e) => !e.is_shadow && e.ha_known !== false);
       if (this._showOnlyMismatches) {
-        visible = visible.filter(
-          (e) => e.sync_unifi_possible || e.sync_device_possible || e.conflict_unifi
-        );
+        // e.mismatch kommt fertig aus dem Coordinator (Alias, Gerätename,
+        // DNS-Record, Konflikt — minus stummgeschaltete Zeilen). Damit zeigt
+        // der Filter exakt das, was der Sensor als "X offen" zählt.
+        visible = visible.filter((e) => e.mismatch);
       }
     }
     if (this._search) {
@@ -172,9 +173,9 @@ class UnialiCard extends HTMLElement {
             <input type="checkbox" id="show-shadow" />
             UniFi-Schatten anzeigen <span class="badge"></span>
           </label>
-          <label class="filter audit-only" title="DHCP-Hostname des Clients mit eigenem Sync-Knopf. UniFi leitet daraus den lokalen DNS-Namen ab — deshalb getrennt vom Alias.">
+          <label class="filter audit-only" title="Hostname + lokaler DNS-Record des Clients, mit eigenem Sync-Knopf. Ein Klick schreibt beides und legt bei Bedarf die nötige DHCP-Reservation an — wirkt also über die Card hinaus, deshalb getrennt vom Alias.">
             <input type="checkbox" id="show-hostname" />
-            Hostnamen
+            Hostnamen + DNS
           </label>
           <input type="search" class="search" placeholder="filter…" autocomplete="off" />
           <span class="filter-hint"></span>
@@ -210,7 +211,7 @@ class UnialiCard extends HTMLElement {
           <th data-sort="ha_name" class="sortable">HA-Name <span class="sort-ind"></span></th>
           <th></th>
           <th data-sort="unifi_alias" class="sortable">UniFi-Alias <span class="sort-ind"></span></th>
-          ${this._showHostname ? '<th></th><th data-sort="unifi_hostname" class="sortable">Hostname <span class="sort-ind"></span></th>' : ""}
+          ${this._showHostname ? '<th></th><th data-sort="unifi_hostname" class="sortable">Hostname / DNS <span class="sort-ind"></span></th>' : ""}
           <th></th>
           <th data-sort="device_name" class="sortable">Geräte-Name <span class="sort-ind"></span></th>
         </tr>
@@ -372,7 +373,9 @@ class UnialiCard extends HTMLElement {
         const eingabe = window.prompt(
           "Neuer UniFi-Hostname für " + mac + "\n\n" +
             "Wird DNS-tauglich normalisiert (klein, Umlaute ausgeschrieben,\n" +
-            "Trenner zu \"-\"). UniFi leitet daraus den lokalen DNS-Namen ab.",
+            "Trenner zu \"-\"). Setzt zusätzlich einen lokalen DNS-Record\n" +
+            "und legt dafür bei Bedarf eine DHCP-Reservation auf die\n" +
+            "aktuelle IP an.",
           aktuell
         );
         if (eingabe && eingabe.trim() && eingabe.trim() !== aktuell) {
@@ -381,6 +384,13 @@ class UnialiCard extends HTMLElement {
             hostname: eingabe.trim(),
           });
         }
+        return;
+      }
+      if (action === "set_ignore") {
+        this._hass.callService("uniali", "set_ignore", {
+          mac,
+          ignore: btn.dataset.ignore === "1",
+        });
         return;
       }
       if (action === "forget_unifi_confirm") {
@@ -420,6 +430,10 @@ class UnialiCard extends HTMLElement {
 
   _renderRow(e) {
     const tr = document.createElement("tr");
+    if (e.ignored) {
+      tr.classList.add("ignored");
+      tr.title = "stummgeschaltet — zählt nicht als Mismatch";
+    }
     if (e.is_shadow) {
       tr.classList.add("shadow");
       tr.title = "UniFi-Schatten — kein echtes HA-Device (nur device_tracker der UniFi-Integration)";
@@ -450,6 +464,18 @@ class UnialiCard extends HTMLElement {
       td.textContent = e.ha_name || "—";
       if (!e.ha_name) td.classList.add("empty");
     }
+    // Stummschalten: nimmt die Zeile aus Zähler und Mismatch-Filter, lässt
+    // sie aber stehen. Für Abweichungen, die man kennt und bewusst so lässt.
+    const mute = document.createElement("button");
+    mute.className = e.ignored ? "mute-btn on" : "mute-btn";
+    mute.textContent = e.ignored ? "🔕" : "🔔";
+    mute.title = e.ignored
+      ? "Stummgeschaltet — klicken, um wieder mitzuzählen"
+      : "Zeile stummschalten (bleibt sichtbar, zählt nicht mehr als Mismatch)";
+    mute.dataset.action = "set_ignore";
+    mute.dataset.mac = e.mac;
+    mute.dataset.ignore = e.ignored ? "" : "1";
+    td.appendChild(mute);
     return td;
   }
 
@@ -566,16 +592,48 @@ class UnialiCard extends HTMLElement {
     return td;
   }
 
-  // Hostname-Spalte (optional): der DHCP-Name, den das Gerät selbst meldet.
+  // Hostname-Spalte (optional): zwei Zeilen. Oben der Name, den UniFi kennt
+  // (vom Gerät gemeldet oder von uns gesetzt), darunter der lokale DNS-Record
+  // — der einzige der beiden Werte, der zuverlässig hält.
   _cellHostname(e) {
     const td = document.createElement("td");
-    td.className = "name";
+    td.className = "name hostcell";
+
+    const oben = document.createElement("div");
+    oben.className = "host-line";
     if (e.unifi_hostname) {
-      td.textContent = e.unifi_hostname;
+      oben.textContent = e.unifi_hostname;
     } else {
-      td.textContent = "—";
-      td.classList.add("empty");
+      oben.textContent = "—";
+      oben.classList.add("empty");
     }
+    if (e.hostname_volatile) {
+      const tag = document.createElement("span");
+      tag.className = "iface-badge volatile";
+      tag.textContent = "flüchtig";
+      tag.title =
+        "uniali hat den Hostnamen hier schon gesetzt, UniFi zeigt wieder " +
+        "einen anderen: das Gerät meldet seinen Namen per DHCP selbst und " +
+        "drückt ihn bei jedem Lease durch. Zählt deshalb nicht als Mismatch " +
+        "— der DNS-Record darunter hält.";
+      oben.appendChild(tag);
+    }
+    td.appendChild(oben);
+
+    const unten = document.createElement("div");
+    unten.className = "dns-line";
+    if (e.unifi_dns_record) {
+      unten.textContent = e.unifi_dns_record;
+      unten.title = "Lokaler DNS-Record (bleibt bestehen)";
+    } else if (e.dns_target) {
+      unten.textContent = "kein DNS-Record";
+      unten.classList.add("empty");
+      unten.title = `Ein Klick würde ${e.dns_target} anlegen`;
+    } else {
+      unten.textContent = "";
+      unten.title = "Keine DNS-Domain bekannt — in den uniali-Optionen setzen";
+    }
+    td.appendChild(unten);
     return td;
   }
 
@@ -583,16 +641,38 @@ class UnialiCard extends HTMLElement {
     const td = document.createElement("td");
     td.className = "arrow";
     if (e.sync_hostname_possible) {
+      const zeilen = [
+        `Hostname "${e.unifi_hostname || "—"}" → "${e.hostname_target}"`,
+      ];
+      // Ein von Hand gepflegter DNS-Record (alarmb.sood4.ch für einen Client,
+      // der in HA anders heisst) ist kein Versehen — den darf ein Klick nicht
+      // stillschweigend wegräumen. Gleiche Warnlogik wie in der Alias-Spalte.
+      const dnsUeberschreibt =
+        e.unifi_dns_record && e.dns_target && !e.in_sync_dns;
+      if (e.dns_target && !e.in_sync_dns) {
+        zeilen.push(
+          dnsUeberschreibt
+            ? `⚠ bestehender DNS-Record "${e.unifi_dns_record}" wird durch ${e.dns_target} ersetzt`
+            : `DNS-Record → ${e.dns_target}`
+        );
+        if (!e.use_fixedip) {
+          zeilen.push(
+            e.unifi_ip
+              ? `⚠ legt dafür eine DHCP-Reservation auf ${e.unifi_ip} an`
+              : "⚠ Client offline — ohne IP kein DNS-Record, nur der Hostname"
+          );
+        }
+      } else if (!e.dns_target) {
+        zeilen.push("(kein DNS-Record — keine Domain in den Optionen)");
+      }
       const btn = document.createElement("button");
       btn.className = "sync-btn overwrite";
-      btn.textContent = "⇨";
-      btn.title =
-        `Hostname "${e.unifi_hostname || "—"}" → "${e.hostname_target}" setzen.\n` +
-        "Achtung: UniFi leitet daraus den lokalen DNS-Namen ab.";
+      btn.textContent = dnsUeberschreibt ? "⚠⇨" : "⇨";
+      btn.title = zeilen.join("\n");
       btn.dataset.action = "sync_hostname";
       btn.dataset.mac = e.mac;
       td.appendChild(btn);
-    } else if (e.in_sync_hostname && e.ha_known) {
+    } else if (e.ha_known && (e.in_sync_dns || e.in_sync_hostname)) {
       td.textContent = "✓";
       td.classList.add("ok");
       td.title = "in sync (Vergleich ohne Gross-/Kleinschreibung und Trennzeichen)";
@@ -691,6 +771,30 @@ class UnialiCard extends HTMLElement {
       .iface-badge.wifi { background: rgba(33, 150, 243, 0.18); color: var(--info-color, #1565c0); }
       .iface-badge.dual { background: rgba(255, 166, 0, 0.22); color: var(--warning-color, #c66900); font-weight: 600; }
       .iface-badge.esphome { background: rgba(156, 39, 176, 0.18); color: var(--accent-color, #7b1fa2); font-weight: 600; }
+      .iface-badge.volatile { background: rgba(255, 166, 0, 0.18); color: var(--warning-color, #c66900); }
+      /* Hostname-Zelle: gemeldeter Name oben, DNS-Record klein darunter. */
+      .hostcell .host-line { display: flex; align-items: center; gap: 4px; }
+      .hostcell .dns-line {
+        font-size: 0.82em;
+        opacity: 0.75;
+        font-family: var(--code-font-family, monospace);
+      }
+      .hostcell .dns-line.empty { opacity: 0.4; font-style: italic; }
+      /* Stummschalten: dezent, bis man mit der Maus draufgeht. */
+      .mute-btn {
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-size: 0.85em;
+        opacity: 0.22;
+        padding: 0 2px;
+        margin-left: 4px;
+        line-height: 1;
+      }
+      .mute-btn:hover { opacity: 1; }
+      .mute-btn.on { opacity: 0.9; }
+      tbody tr.ignored { opacity: 0.5; }
+      tbody tr.ignored .mute-btn { opacity: 1; }
       .device-link { color: var(--primary-color); text-decoration: none; }
       .device-link:hover { text-decoration: underline; }
       /* Mode-Toggle */
