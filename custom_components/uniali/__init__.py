@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -214,19 +215,29 @@ def _async_register_services(
             if isinstance(coord, UnialiCoordinator):
                 await coord.async_forget_unifi(mac)
 
+    # Lesen und Stummschalten darf jeder Benutzer: beides bleibt in HA und
+    # ändert nichts am Controller.
     hass.services.async_register(DOMAIN, SERVICE_REFRESH, _refresh)
-    hass.services.async_register(
-        DOMAIN, SERVICE_SYNC_UNIFI, _sync_unifi, schema=SERVICE_SYNC_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SYNC_DEVICE, _sync_device, schema=SERVICE_SYNC_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SYNC_HOSTNAME, _sync_hostname, schema=SERVICE_HOSTNAME_SCHEMA
-    )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_IGNORE, _set_ignore, schema=SERVICE_IGNORE_SCHEMA
     )
-    hass.services.async_register(
-        DOMAIN, SERVICE_FORGET_UNIFI, _forget_unifi, schema=SERVICE_SYNC_SCHEMA
+    # Alles, was in den UniFi-Controller oder die HA-Geräte-Registry schreibt,
+    # ist Administratoren vorbehalten. forget_unifi ist nicht umkehrbar (Alias,
+    # feste IP, Gruppe und Sperrstatus gehen verloren), sync_hostname legt
+    # DHCP-Reservierungen und DNS-Records an.
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_SYNC_UNIFI, _sync_unifi, schema=SERVICE_SYNC_SCHEMA
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_SYNC_DEVICE, _sync_device, schema=SERVICE_SYNC_SCHEMA
+    )
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        SERVICE_SYNC_HOSTNAME,
+        _sync_hostname,
+        schema=SERVICE_HOSTNAME_SCHEMA,
+    )
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_FORGET_UNIFI, _forget_unifi, schema=SERVICE_SYNC_SCHEMA
     )

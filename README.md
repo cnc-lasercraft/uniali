@@ -77,6 +77,8 @@ A second card mode for cleaning up stale records: it shows UniFi-only clients wi
 | `uniali.set_ignore` | Mute a row or count it again (`mac`, `ignore`) |
 | `uniali.forget_unifi` | Make UniFi forget the client entirely (`mac`) |
 
+`sync_unifi`, `sync_device`, `sync_hostname` and `forget_unifi` write to the UniFi controller or the Home Assistant device registry and can only be called by **administrators**. `refresh` and `set_ignore` are open to every user. uniali manages **one** UniFi site per Home Assistant instance.
+
 ## Notifications via Herold (optional)
 
 If [ha-herold](https://github.com/cnc-lasercraft/ha-herold) is installed, uniali reports its actions there and gains role-based routing and a central history. Without Herold the notifications simply don't happen — there is no dependency and no `notify.*` fallback.

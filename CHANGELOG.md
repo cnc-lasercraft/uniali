@@ -3,6 +3,37 @@
 Alle nennenswerten Änderungen an uniali. Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
 Versionierung nach [SemVer](https://semver.org/lang/de/).
 
+## [1.3.1] — 2026-11-15
+
+### Geändert
+
+- **Schreibende Services nur noch für Administratoren.** `sync_unifi`,
+  `sync_device`, `sync_hostname` und `forget_unifi` sind als Admin-Services
+  registriert. Vorher konnte jeder Home-Assistant-Benutzer sie aufrufen — auch
+  `forget_unifi`, das Alias, feste IP, Gruppe und Sperrstatus eines Clients
+  unwiderruflich entfernt, und `sync_hostname`, das DHCP-Reservierungen und
+  DNS-Records anlegt. `refresh` und `set_ignore` bleiben für alle offen.
+- **Ein Eintrag pro Instanz** (`single_config_entry`). Der Setup-Flow liess
+  mehrere Sites zu, der Rest nahm aber genau eine an: alle Einträge teilten
+  sich eine Storage-Datei (stummgeschaltete Zeilen und gemerkte Hostnamen
+  überschrieben sich gegenseitig), und jeder Service lief über alle Sites —
+  ein «Vergessen» auf der einen Card vergass die MAC überall. Bestehende
+  Installationen mit einem Eintrag sind nicht betroffen.
+
+## [1.3.0] — 2026-09-02
+
+### Geändert
+
+- **Hostname-Sync schreibt zusätzlich einen DNS-Record.** Ein per API gesetzter
+  Hostname hält nicht — UniFi lernt ihn aus DHCP/mDNS neu und überschreibt ihn
+  beim nächsten Lease. `sync_hostname` schreibt deshalb in einem Zug Hostname,
+  DHCP-Reservation auf die aktuelle IP und `local_dns_record`. Das
+  Domain-Suffix kommt aus den Optionen oder aus den vorhandenen Records.
+
+### Neu
+
+- `uniali.set_ignore` — eine Zeile bleibt sichtbar, zählt aber nicht mehr mit.
+
 ## [1.2.0] — 2026-09-01
 
 ### Neu

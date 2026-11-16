@@ -74,6 +74,8 @@ Zweiter Card-Modus für Karteileichen-Cleanup: zeigt UniFi-only-Clients ohne HA-
 | `uniali.set_ignore` | Zeile stummschalten oder wieder mitzählen (`mac`, `ignore`) |
 | `uniali.forget_unifi` | UniFi-Client komplett vergessen lassen (`mac`) |
 
+`sync_unifi`, `sync_device`, `sync_hostname` und `forget_unifi` schreiben in den UniFi-Controller bzw. die Geräte-Registry von Home Assistant und sind **Administratoren** vorbehalten. `refresh` und `set_ignore` darf jeder Benutzer aufrufen. uniali verwaltet **eine** UniFi-Site pro Home-Assistant-Instanz.
+
 ## Meldungen via Herold (optional)
 
 Ist [ha-herold](https://github.com/cnc-lasercraft/ha-herold) installiert, meldet uniali seine Aktionen dorthin und profitiert von Rollen-Routing und zentraler History. Fehlt Herold, entfallen die Meldungen ersatzlos — es gibt keine Abhängigkeit und keinen `notify.*`-Fallback.
